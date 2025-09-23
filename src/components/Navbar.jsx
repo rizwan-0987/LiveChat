@@ -75,13 +75,15 @@
 // }
 
 // export default Navbar
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";   // ← add useEffect
 import axios from "axios";
 import { useDispatch, useSelector } from "react-redux";
 import { Link, useNavigate } from "react-router-dom";
 import { BASE_URL } from "../utils/constants";
 import { removeUser } from "../utils/userSlice";
 import { removeFeed } from "../utils/feedSlice";
+import { createSocketConnection } from "../utils/socket";  // ← add this
+
 
 const Navbar = () => {
   const user = useSelector((store) => store.user);
@@ -112,6 +114,13 @@ const Navbar = () => {
       <span className="font-semibold">{letter[0]?.toUpperCase()}</span>
     </div>
   );
+
+useEffect(() => {
+  if (!user?._id) return;
+  const socket = createSocketConnection();
+  socket.emit("register", { userId: user._id }); // ← Step B happens here
+}, [user?._id]);
+
 
   return (
     <div className="navbar bg-base-200/80 backdrop-blur supports-[backdrop-filter]:bg-base-200/60 sticky top-0 z-50 ">

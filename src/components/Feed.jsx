@@ -25,10 +25,15 @@ if (feed.length <= 0 ) {
   return <div className="flex justify-center my-10"> NO User Available</div>
 }
   return (
-  feed && ( <div className="flex items-center justify-center ">
-      <UserCard user ={ feed[0]}/>
-    </div>
-    ))
+    feed && (
+      <div className="flex items-center justify-center ">
+        <UserCard  user={feed[0]} />
+        {/* {feed.map((user) => (
+          <UserCard key={user._id || user.email} user={user} />
+        ))} */}
+      </div>
+    )
+  );
   
 }
 
