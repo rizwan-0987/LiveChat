@@ -55,10 +55,8 @@ export default function Register() {
         backgroundAttachment: "fixed",
       }}
     >
-      {/* Overlay */}
       <div className="absolute inset-0 bg-black/50" />
 
-      {/* Logo — top-left */}
       <Link
         to="/"
         className="absolute top-4 left-4 inline-flex items-center gap-2 z-10"
@@ -67,7 +65,6 @@ export default function Register() {
         <span className="font-bold text-xl pb-2 text-white">LiveChat</span>
       </Link>
 
-      {/* Card */}
       <div className="relative mt-7 w-full max-w-md z-10">
         <div className="card bg-base-100 shadow-xl border border-base-200">
           <div className="card-body">
@@ -78,7 +75,6 @@ export default function Register() {
 
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {/* First name */}
                 <div className="form-control">
                   <label className="label" htmlFor="firstName">
                     <span className="label-text">First name</span>
@@ -95,7 +91,6 @@ export default function Register() {
                   />
                 </div>
 
-                {/* Last name */}
                 <div className="form-control">
                   <label className="label" htmlFor="lastName">
                     <span className="label-text">Last name</span>
@@ -113,7 +108,6 @@ export default function Register() {
                 </div>
               </div>
 
-              {/* Email */}
               <div className="form-control">
                 <label className="label" htmlFor="email">
                   <span className="label-text">Email</span>
@@ -130,7 +124,6 @@ export default function Register() {
                 />
               </div>
 
-              {/* Password */}
               <div className="form-control">
                 <label className="label" htmlFor="password">
                   <span className="label-text">Password</span>
@@ -159,7 +152,6 @@ export default function Register() {
                 <p className="text-error text-xs mt-1">{error}</p>
               </div>
 
-              {/* Submit */}
               <button
                 onClick={handleRegister}
                 className={`btn btn-primary w-full ${
@@ -171,7 +163,6 @@ export default function Register() {
               </button>
             </div>
 
-            {/* Footer */}
             <p className="text-sm text-center mt-3">
               Already having account?{" "}
               <Link to="/login" className="link link-primary">
@@ -181,7 +172,6 @@ export default function Register() {
           </div>
         </div>
 
-        {/* Small print */}
         <p className="text-xs opacity-60 text-center mt-3 text-white">
           By continuing you agree to our Terms & Privacy Policy.
         </p>

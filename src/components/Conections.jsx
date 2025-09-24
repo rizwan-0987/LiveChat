@@ -1,121 +1,4 @@
-// import axios from 'axios'
 
-// import { createSocketConnection } from "../utils/socket";
-// import React, { useEffect, useState } from "react";
-
-// import { BASE_URL } from '../utils/constants'
-// import { useDispatch, useSelector } from 'react-redux'
-// import { addConnection } from '../utils/connectionSlice'
-// import { Link } from 'react-router-dom'
-
-// const Conections = () => {
-//   const connections = useSelector((store) => store.connection);
-
-//   const [presence, setPresence] = useState({}); // { userId: { isOnline, lastSeen } }
-
-//   const dispatch = useDispatch();
-//   const fetchConnections = async () => {
-//     try {
-//       const res = await axios.get(BASE_URL + "/user/connections", {
-//         withCredentials: true,
-//       });
-//       console.log(res.data[0].firstName);
-//       dispatch(addConnection(res.data));
-//     } catch (error) {
-//       //todo error
-//     }
-//   };
-//   useEffect(() => {
-//     fetchConnections();
-//   }, []);
-
-
-
-
-// useEffect(() => {
-//   if (!connections) return;
-//   const socket = createSocketConnection();
-//   const ids = connections.map((c) => c._id);
-//   socket.emit("watchPresence", { userIds: ids });
-
-//   const onSnapshot = (list) => {
-//     const map = {};
-//     list.forEach(
-//       (u) => (map[u.userId] = { isOnline: u.isOnline, lastSeen: u.lastSeen })
-//     );
-//     setPresence(map);
-//   };
-//   const onPresence = (u) => {
-//     setPresence((prev) => ({
-//       ...prev,
-//       [u.userId]: { isOnline: u.isOnline, lastSeen: u.lastSeen },
-//     }));
-//   };
-
-//   socket.on("presenceSnapshot", onSnapshot);
-//   socket.on("presence", onPresence);
-//   return () => {
-//     socket.off("presenceSnapshot", onSnapshot);
-//     socket.off("presence", onPresence);
-//   };
-// }, [connections]);
-
-// const formatLastSeen = (ts) =>
-//   ts ? `last seen ${new Date(ts).toLocaleString()}` : "Offline";
-
-
-
-
-
-
-
-
-
-
-//   if (!connections) return;
-//   if (connections.length === 0) {
-//     return <h1>no connection found</h1>;
-//   }
-//   return (
-//     <div className=" text-center my-10">
-//       <h1 className="text-bold text-2xl"> Connection</h1>
-
-//       {connections.map((connection) => (
-
-        
-//         <div
-//           key={connection._id}
-//           className="m-4 p-4 bg-base-300 rounded-xl flex justify-between"
-//         >
-//           <div className="flex">
-//             <img
-//               className="w-20 h-20 mx-5 rounded-full"
-//               src={connection.photoUrl}
-//               alt="profile image"
-//             />
-//             <div className="flex flex-col">
-//               <h3 className="self-start text-2xl font-bold">
-//                 {connection.firstName + " " + connection.lastName}
-//               </h3>
-//               {connection.age && connection.gender && (
-//                 <h3 className="self-start">
-//                   {" "}
-//                   {connection.age + " " + connection.gender}
-//                 </h3>
-//               )}
-//               <h3>{connection.about}</h3>
-//             </div>
-//           </div>
-//           <Link to={"/chat/" + connection._id}>
-//             <button className="btn btn-primary">Chat</button>
-//           </Link>
-//         </div>
-//       ))}
-//     </div>
-//   );
-// }
-
-// export default Conections
 import axios from "axios";
 import React, { useEffect, useState } from "react";
 import { BASE_URL } from "../utils/constants";
@@ -126,25 +9,48 @@ import { createSocketConnection } from "../utils/socket";
 
 const Conections = () => {
   const connections = useSelector((store) => store.connection) || [];
-  const [presence, setPresence] = useState({}); // { [userId]: { isOnline, lastSeen } }
+  const user = useSelector((s) => s.user);
+
+  const [presence, setPresence] = useState({});   
+  const [threadMap, setThreadMap] = useState({}); 
+
   const dispatch = useDispatch();
 
-  const fetchConnections = async () => {
+  useEffect(() => {
+    const fetchConnections = async () => {
+      try {
+        const res = await axios.get(BASE_URL + "/user/connections", {
+          withCredentials: true,
+        });
+        dispatch(addConnection(Array.isArray(res.data) ? res.data : []));
+      } catch (error) {
+      }
+    };
+    fetchConnections();
+  }, [dispatch]);
+
+  const loadThreadsSummary = async () => {
+    if (!user?._id) return;
     try {
-      const res = await axios.get(BASE_URL + "/user/connections", {
+      const res = await axios.get(BASE_URL + "/chat/threads-summary", {
         withCredentials: true,
       });
-      dispatch(addConnection(Array.isArray(res.data) ? res.data : []));
-    } catch (error) {
-      // TODO: toast/log
+      setThreadMap(res.data?.threads || {});
+    } catch {
+      setThreadMap({});
     }
   };
 
   useEffect(() => {
-    fetchConnections();
+    loadThreadsSummary();
+  }, [user?._id]);
+
+  useEffect(() => {
+    const onFocus = () => loadThreadsSummary();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   }, []);
 
-  // Watch presence for current list
   useEffect(() => {
     if (!Array.isArray(connections) || connections.length === 0) return;
 
@@ -184,8 +90,77 @@ const Conections = () => {
     };
   }, [connections]);
 
+  useEffect(() => {
+    if (!user?._id) return;
+    const socket = createSocketConnection();
+
+    const onMessageReceived = (payload) => {
+      if (String(payload.targetUserId) !== String(user._id)) return; // I'm the recipient
+      const fromId = String(payload.userId);
+      setThreadMap((prev) => {
+        const cur = prev[fromId] || {};
+        return {
+          ...prev,
+          [fromId]: {
+            unreadCount: (cur.unreadCount || 0) + 1,
+            lastMessageText: payload.text,
+            lastMessageAt: payload.createdAt,
+            lastMessageSenderId: String(payload.userId),
+          },
+        };
+      });
+    };
+
+    const onMessageAck = (payload) => {
+      if (String(payload.userId) !== String(user._id)) return;
+      const toId = String(payload.targetUserId);
+      setThreadMap((prev) => {
+        const cur = prev[toId] || {};
+        return {
+          ...prev,
+          [toId]: {
+            unreadCount: cur.unreadCount || 0,
+            lastMessageText: payload.text,
+            lastMessageAt: payload.createdAt,
+            lastMessageSenderId: String(payload.userId),
+          },
+        };
+      });
+    };
+
+    const onUnreadReset = ({ withUserId }) => {
+      const id = String(withUserId);
+      setThreadMap((prev) => {
+        const cur = prev[id] || {};
+        return { ...prev, [id]: { ...cur, unreadCount: 0 } };
+      });
+    };
+
+    socket.on("messageReceived", onMessageReceived);
+    socket.on("messageAck", onMessageAck);
+    socket.on("unreadReset", onUnreadReset);
+
+    return () => {
+      socket.off("messageReceived", onMessageReceived);
+      socket.off("messageAck", onMessageAck);
+      socket.off("unreadReset", onUnreadReset);
+    };
+  }, [user?._id]);
+
+  const handleOpenChat = (friendId) => {
+    setThreadMap((prev) => {
+      const cur = prev[friendId] || {};
+      return { ...prev, [friendId]: { ...cur, unreadCount: 0 } };
+    });
+  };
+
   const formatLastSeen = (ts) =>
     ts ? `last seen ${new Date(ts).toLocaleString()}` : "Offline";
+
+  const formatTime = (ts) =>
+    ts ? new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+
+  const truncate = (s = "", n = 56) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 
   if (!Array.isArray(connections) || connections.length === 0) {
     return <h1 className="p-6 text-center opacity-70">no connection found</h1>;
@@ -196,34 +171,62 @@ const Conections = () => {
       <h1 className="text-bold text-2xl mb-4">Connection</h1>
 
       {connections.map((connection) => {
-        const p = presence[String(connection._id)];
+        const id = String(connection._id);
+        const p = presence[id];
+        const t = threadMap[id] || {};
+        const unreadCount = t.unreadCount || 0;
+        const displayCount = unreadCount > 99 ? "99+" : unreadCount;
+
+        const lastMine =
+          t.lastMessageSenderId &&
+          user?._id &&
+          String(t.lastMessageSenderId) === String(user._id);
+
+        const lastPrefix = lastMine ? "You: " : "";
+        const lastLine = t.lastMessageText ? `${lastPrefix}${t.lastMessageText}` : "Say hello 👋";
+
         return (
           <div
-            key={connection._id}
+            key={id}
             className="m-4 p-4 bg-base-300 rounded-xl flex justify-between items-center"
           >
             <div className="flex items-center">
-              <img
-                className="w-20 h-20 mx-5 rounded-full object-cover"
-                src={connection.photoUrl}
-                alt="profile"
-              />
+              <div className="relative mx-5">
+                <img
+                  className="w-20 h-20 rounded-full object-cover"
+                  src={connection.photoUrl}
+                  alt="profile"
+                />
+                {unreadCount > 0 && (
+                  <span
+                    className="badge badge-primary absolute -top-1 -right-1 text-xs"
+                    title={`${displayCount} unread`}
+                  >
+                    {displayCount}
+                  </span>
+                )}
+                <span
+                  className={`absolute bottom-0 right-0 w-4 h-4 rounded-full ring-2 ring-base-100 ${
+                    p?.isOnline ? "bg-green-500" : "bg-gray-400"
+                  }`}
+                  title={p?.isOnline ? "Online" : "Offline"}
+                />
+              </div>
+
               <div className="flex flex-col items-start">
-                <h3 className="text-2xl font-bold">
-                  {(connection.firstName || "") +
-                    " " +
-                    (connection.lastName || "")}
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-2xl font-bold">
+                    {(connection.firstName || "") + " " + (connection.lastName || "")}
+                  </h3>
+                </div>
 
-                {connection.age && connection.gender && (
-                  <h3>{connection.age + " " + connection.gender}</h3>
-                )}
+                <div className="mt-1 flex items-center gap-3 max-w-[46ch]">
+                  <span className="text-sm opacity-80 truncate">
+                    {truncate(lastLine, 56)}
+                  </span>
+                  <span className="text-xs opacity-50">{formatTime(t.lastMessageAt)}</span>
+                </div>
 
-                {connection.about && (
-                  <h3 className="opacity-70">{connection.about}</h3>
-                )}
-
-                {/* 👇 Presence badge */}
                 <div className="mt-1">
                   {p?.isOnline ? (
                     <span className="badge badge-success">Online</span>
@@ -234,7 +237,7 @@ const Conections = () => {
               </div>
             </div>
 
-            <Link to={"/chat/" + connection._id}>
+            <Link to={"/chat/" + id} onClick={() => handleOpenChat(id)}>
               <button className="btn btn-primary">Chat</button>
             </Link>
           </div>
