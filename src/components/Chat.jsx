@@ -1,9 +1,8 @@
-
 import { useRef, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useSelector } from "react-redux";
 import axios from "axios";
-import { createSocketConnection } from "../utils/socket";
+import { getSocket } from "../utils/socket"; 
 import { BASE_URL } from "../utils/constants";
 
 export const Chat = () => {
@@ -21,7 +20,9 @@ export const Chat = () => {
 
   const [friendFetched, setFriendFetched] = useState(null);
   const friend = useMemo(() => {
-    const fromList = connections.find((c) => String(c._id) === String(targetUserId));
+    const fromList = connections.find(
+      (c) => String(c._id) === String(targetUserId)
+    );
     return fromList || friendFetched || null;
   }, [connections, targetUserId, friendFetched]);
 
@@ -31,24 +32,59 @@ export const Chat = () => {
     let mounted = true;
     (async () => {
       if (!targetUserId) return setFriendFetched(null);
-      const fromList = connections.find((c) => String(c._id) === String(targetUserId));
-      if (fromList) return setFriendFetched(null);
+
+      const fromList = connections.find(
+        (c) => String(c._id) === String(targetUserId)
+      );
+      if (fromList) {
+        if (mounted) setFriendFetched(fromList);
+        const hasAvatar = !!(
+          fromList.photoUrl ||
+          fromList.avatar ||
+          fromList.profilePic ||
+          fromList.imageUrl
+        );
+        if (!hasAvatar) {
+          try {
+            const { data } = await axios.get(
+              `${BASE_URL}/user/${targetUserId}`,
+              { withCredentials: true }
+            );
+            if (mounted)
+              setFriendFetched((prev) => ({
+                ...prev,
+                ...(data?.user || data || {}),
+              }));
+          } catch {}
+        }
+        return;
+      }
+
       try {
-        const { data } = await axios.get(`${BASE_URL}/user/${targetUserId}`, { withCredentials: true });
+        const { data } = await axios.get(`${BASE_URL}/user/${targetUserId}`, {
+          withCredentials: true,
+        });
         if (mounted) setFriendFetched(data?.user || data || null);
       } catch {
         if (mounted) setFriendFetched(null);
       }
     })();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, [targetUserId, connections]);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
-      if (!targetUserId) { if (mounted) setMessages([]); return; }
+      if (!targetUserId) {
+        if (mounted) setMessages([]);
+        return;
+      }
       try {
-        const { data } = await axios.get(`${BASE_URL}/chat/${targetUserId}`, { withCredentials: true });
+        const { data } = await axios.get(`${BASE_URL}/chat/${targetUserId}`, {
+          withCredentials: true,
+        });
         const chatMessages = (data?.messages || []).map((m) => ({
           _id: m._id,
           userId: m.senderId?._id || m.senderId,
@@ -63,27 +99,52 @@ export const Chat = () => {
         if (mounted) setMessages([]);
       }
     })();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, [targetUserId]);
 
   useEffect(() => {
-    if (!userId || !targetUserId) return;
-    const socket = createSocketConnection();
+    if (!userId) return;
+    const socket = getSocket();
     socketRef.current = socket;
+    return () => {
+      socketRef.current = null;
+    }; 
+  }, [userId]);
 
-    const roomPayload = { userId: String(userId), targetUserId: String(targetUserId) };
+  useEffect(() => {
+    const socket = socketRef.current || getSocket();
+    if (!socket || !userId || !targetUserId) return;
+
+    const roomPayload = {
+      userId: String(userId),
+      targetUserId: String(targetUserId),
+    };
     socket.emit("joinChat", roomPayload);
 
     const onMessageReceived = (payload) => {
-      if (String(payload.userId) === String(userId)) return; // ignore your own
-      setMessages((prev) => [...prev, payload]);
+      if (String(payload.userId) === String(userId)) return; // ignore echo
+      setMessages((prev) => {
+        const exists = prev.some(
+          (m) =>
+            (payload._id && String(m._id) === String(payload._id)) ||
+            (payload.tempId && m.tempId === payload.tempId)
+        );
+        return exists ? prev : [...prev, payload];
+      });
     };
 
     const onMessageAck = (payload) => {
       setMessages((prev) =>
         prev.map((m) =>
           m._id === payload.tempId
-            ? { ...m, _id: payload._id, status: payload.status, createdAt: payload.createdAt }
+            ? {
+                ...m,
+                _id: payload._id,
+                status: payload.status,
+                createdAt: payload.createdAt,
+              }
             : m
         )
       );
@@ -92,7 +153,9 @@ export const Chat = () => {
     const onMessagesSeen = ({ messageIds, byUserId }) => {
       if (String(byUserId) !== String(targetUserId)) return;
       setMessages((prev) =>
-        prev.map((m) => (messageIds.includes(String(m._id)) ? { ...m, status: "seen" } : m))
+        prev.map((m) =>
+          messageIds.includes(String(m._id)) ? { ...m, status: "seen" } : m
+        )
       );
     };
 
@@ -116,13 +179,13 @@ export const Chat = () => {
       socket.off("messagesSeen", onMessagesSeen);
       socket.off("messagesDelivered", onMessagesDelivered);
       socket.emit("leaveChat", roomPayload);
-      socketRef.current = null;
     };
   }, [userId, targetUserId]);
 
   useEffect(() => {
-    if (!targetUserId) return;
-    const socket = createSocketConnection();
+    const socket = socketRef.current || getSocket();
+    if (!socket || !targetUserId) return;
+
     socket.emit("watchPresence", { userIds: [String(targetUserId)] });
 
     const flipToDeliveredIfOnline = (isOnline) => {
@@ -151,6 +214,7 @@ export const Chat = () => {
 
     socket.on("presenceSnapshot", onSnapshot);
     socket.on("presence", onPresence);
+
     return () => {
       socket.off("presenceSnapshot", onSnapshot);
       socket.off("presence", onPresence);
@@ -158,26 +222,32 @@ export const Chat = () => {
   }, [targetUserId, userId]);
 
   useEffect(() => {
-    if (!userId || !targetUserId) return;
+    const socket = socketRef.current || getSocket();
+    if (!socket || !userId || !targetUserId) return;
+
     const hasUnseen = messages.some(
       (m) => String(m.userId) === String(targetUserId) && m.status !== "seen"
     );
     if (hasUnseen) {
-      const socket = createSocketConnection();
-      socket.emit("markSeen", { userId: String(userId), targetUserId: String(targetUserId) });
+      socket.emit("markSeen", {
+        userId: String(userId),
+        targetUserId: String(targetUserId),
+      });
     }
   }, [messages, userId, targetUserId]);
 
   useEffect(() => {
-    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+    if (listRef.current)
+      listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [messages]);
 
   const sendMessage = () => {
-    const socket = socketRef.current;
+    const socket = socketRef.current || getSocket();
     const text = newMessage.trim();
     if (!socket || !text || !userId || !targetUserId) return;
 
-    const tempId = "tmp_" + Date.now() + "_" + Math.random().toString(36).slice(2);
+    const tempId =
+      "tmp_" + Date.now() + "_" + Math.random().toString(36).slice(2);
     const payload = {
       _id: tempId,
       tempId,
@@ -190,7 +260,7 @@ export const Chat = () => {
       status: "sent",
     };
 
-    setMessages((prev) => [...prev, payload]); 
+    setMessages((prev) => [...prev, payload]);
     setNewMessage("");
     socket.emit("sendMessage", payload);
   };
@@ -199,7 +269,9 @@ export const Chat = () => {
     const n = `${friend?.firstName ?? ""} ${friend?.lastName ?? ""}`.trim();
     if (n) return n;
     const other = messages.find((m) => String(m.userId) !== String(userId));
-    return other ? `${other.firstName ?? ""} ${other.lastName ?? ""}`.trim() : "Chat";
+    return other
+      ? `${other.firstName ?? ""} ${other.lastName ?? ""}`.trim()
+      : "Chat";
   }, [friend, messages, userId]);
 
   const isOnline = !!targetPresence?.isOnline;
@@ -208,17 +280,37 @@ export const Chat = () => {
     : "";
 
   const avatarSrc =
-    friend?.photoUrl || friend?.avatar || friend?.profilePic || friend?.imageUrl || null;
+    friend?.photoUrl ||
+    friend?.avatar ||
+    friend?.profilePic ||
+    friend?.imageUrl ||
+    null;
 
   const initials =
-    `${friend?.firstName?.[0] || ""}${friend?.lastName?.[0] || ""}`.toUpperCase() || "U";
+    `${friend?.firstName?.[0] || ""}${
+      friend?.lastName?.[0] || ""
+    }`.toUpperCase() || "U";
+
+  const uniqueMessages = useMemo(() => {
+    const seen = new Set();
+    return messages.filter((m) => {
+      const key = String(m._id || m.tempId);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [messages]);
 
   return (
     <div className="w-[90%] mx-auto border border-gray-600 m-5 h-[83vh] flex flex-col">
       <div className="p-5 border-b border-gray-600 flex items-center gap-3">
         <div className="relative w-10 h-10">
           {avatarSrc ? (
-            <img src={avatarSrc} alt="avatar" className="w-10 h-10 rounded-full object-cover" />
+            <img
+              src={avatarSrc}
+              alt="avatar"
+              className="w-10 h-10 rounded-full object-cover"
+            />
           ) : (
             <div className="w-10 h-10 rounded-full bg-neutral text-neutral-content flex items-center justify-center">
               <span className="text-sm font-semibold">{initials}</span>
@@ -233,19 +325,26 @@ export const Chat = () => {
         </div>
         <div className="flex flex-col">
           <span className="font-semibold">{headerName}</span>
-          <span className="text-xs opacity-70">{isOnline ? "Online" : lastSeenText}</span>
+          <span className="text-xs opacity-70">
+            {isOnline ? "Online" : lastSeenText}
+          </span>
         </div>
       </div>
 
       <div ref={listRef} className="flex-1 overflow-y-auto p-5">
-        {messages.map((msg, index) => {
+        {uniqueMessages.map((msg, index) => {
           const mine = String(userId) === String(msg.userId);
           return (
-            <div key={msg._id ?? index} className={`chat ${mine ? "chat-end" : "chat-start"}`}>
+            <div
+              key={msg._id ?? index}
+              className={`chat ${mine ? "chat-end" : "chat-start"}`}
+            >
               <div className="chat-header">
                 {`${msg.firstName ?? ""} ${msg.lastName ?? ""}`}
                 <time className="text-xs opacity-50 ml-2">
-                  {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString() : ""}
+                  {msg.createdAt
+                    ? new Date(msg.createdAt).toLocaleTimeString()
+                    : ""}
                 </time>
               </div>
               <div className="chat-bubble">{msg.text}</div>
@@ -276,7 +375,6 @@ export const Chat = () => {
   );
 };
 
-
 function Ticks({ status }) {
   if (status === "seen") return <DoubleTick className="text-sky-500" />;
   if (status === "delivered") return <DoubleTick className="text-gray-400" />;
@@ -285,17 +383,42 @@ function Ticks({ status }) {
 
 function SingleTick({ className = "" }) {
   return (
-    <svg className={`w-5 h-5 ${className}`} viewBox="0 0 24 24" fill="none" stroke="currentColor">
-      <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M20 6L9 17l-5-5" />
+    <svg
+      className={`w-5 h-5 ${className}`}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+    >
+      <path
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M20 6L9 17l-5-5"
+      />
     </svg>
   );
 }
 
 function DoubleTick({ className = "" }) {
   return (
-    <svg className={`w-5 h-5 ${className}`} viewBox="0 0 32 32" fill="none" stroke="currentColor">
-      <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M28 8L16 20l-5-5" />
-      <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M24 8L12 20l-5-5" />
+    <svg
+      className={`w-5 h-5 ${className}`}
+      viewBox="0 0 32 32"
+      fill="none"
+      stroke="currentColor"
+    >
+      <path
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M28 8L16 20l-5-5"
+      />
+      <path
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M24 8L12 20l-5-5"
+      />
     </svg>
   );
 }
